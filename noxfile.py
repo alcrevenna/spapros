@@ -137,7 +137,7 @@ def mypy(session: Session) -> None:
     """Type-check using mypy."""
     args = session.posargs or ["spapros", "tests", "docs/conf.py"]
     session.install(".")
-    session.install("mypy", "pytest", "types-requests", "types-attrs", "types-pyyaml")
+    session.install("mypy", "pytest", "types-requests", "types-attrs", "types-pyyaml", "fastapi", "uvicorn")
     session.run("mypy", *args)
 
 
@@ -145,7 +145,7 @@ def mypy(session: Session) -> None:
 def tests(session: Session) -> None:
     """Run the test suite."""
     session.install(".")
-    session.install("coverage[toml]", "pytest", "pygments")
+    session.install("coverage[toml]", "pytest", "pygments", "fastapi", "python-multipart", "httpx")
     try:
         session.run("coverage", "run", "--parallel", "-m", "pytest", *session.posargs)
     finally:
