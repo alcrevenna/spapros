@@ -1,4 +1,4 @@
-"""End to end: upload a real dataset and let the server run spapros selection and evaluation on it."""
+"""End to end: upload a real dataset and let the server run spapros selection, evaluation and the report on it."""
 
 import json
 
@@ -24,6 +24,7 @@ def test_real_pipeline(tmp_path, h5ad):
     options = {
         "celltype_key": "celltype",
         "n": 10,
+        "critical_celltypes": ["celltype_7"],
         "forest_hparams": {"n_trees": 5, "subsample": 200, "test_subsample": 300},
         "n_jobs": 2,
     }
@@ -40,14 +41,40 @@ def test_real_pipeline(tmp_path, h5ad):
 
         results = client.get(f"/jobs/{job_id}/results").json()
         assert results["n_genes"] == len(results["genes"]) == 10
-        assert set(results["summary"]) == {"spapros", "PCA", "DE", "HVG", "random_seed0"}
+        assert set(results["summary"]) == {
+            "spapros",
+            "PCA",
+            "DE",
+            "HVG",
+            "random_seed0",
+            "random_seed1",
+            "random_seed2",
+        }
         assert results["skipped_reference_sets"] == {}
         assert 0 <= results["summary"]["spapros"]["forest_clfs accuracy"] <= 1
-        assert {"probeset.csv", "evaluation_summary.csv", "gene_sets.csv", "confusion_matrix_spapros.csv"} <= set(
-            results["files"]
-        )
+        assert {
+            "probeset.csv",
+            "evaluation_summary.csv",
+            "gene_sets.csv",
+            "confusion_matrix_spapros.csv",
+            "cell_counts.csv",
+            "verdict.json",
+            "report.html",
+        } <= set(results["files"])
 
         confusion = pd.read_csv(tmp_path / "jobs" / job_id / "results" / "confusion_matrix_spapros.csv", index_col=0)
         assert set(confusion.index) == {"celltype_1", "celltype_3", "celltype_6", "celltype_7"}
         # Checkpoints the selector writes, which a rerun resumes from.
         assert (tmp_path / "jobs" / job_id / "selection" / "probeset.csv").exists()
+
+        # Feasibility verdict and report.
+        verdict = client.get(f"/jobs/{job_id}/files/verdict.json").json()
+        assert verdict["verdict"] in {"FEASIBLE", "FEASIBLE WITH CAVEATS", "NOT FEASIBLE", "INCONCLUSIVE"}
+        assert results["verdict"] == {"verdict": verdict["verdict"], "reason": verdict["reason"]}
+        assert client.get(f"/jobs/{job_id}").json()["verdict"]["verdict"] == verdict["verdict"]
+        assert verdict["size"]["budget"] == 10
+        assert [p["k"] for p in verdict["size"]["curve"]] == [3, 5, 8, 10, 13, 15]
+        assert verdict["critical_celltypes"] == ["celltype_7"]
+        assert {r["celltype"] for r in verdict["celltypes"]} == set(confusion.index)
+        report = client.get(f"/jobs/{job_id}/report").text
+        assert verdict["verdict"] in report and "celltype_7" in report
