@@ -8,7 +8,7 @@ Every job lives in its own directory under ``<data_dir>/jobs/<job_id>/``::
     progress.json   current stage, written by the worker process
     selection/      ProbesetSelector save_dir (lets a rerun resume)
     evaluation/     ProbesetEvaluator results_dir (lets a rerun resume)
-    results/        probeset.csv, evaluation_summary.csv, confusion matrices, ...
+    results/        probeset.csv, evaluation_summary.csv, confusion matrices, verdict.json, report.html, ...
     result.json     summary returned by the pipeline once the job succeeded
     error.txt       traceback if the job failed
     log.txt         stdout/stderr of the worker process
@@ -106,6 +106,8 @@ class JobStore:
         if job is not None:
             progress = _read_json(self.path(job_id) / "progress.json") or {}
             job["stage"] = progress.get("stage")
+            result = _read_json(self.path(job_id) / "result.json") or {}
+            job["verdict"] = result.get("verdict")
         return job
 
     def list(self) -> List[Dict[str, Any]]:

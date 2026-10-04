@@ -30,6 +30,39 @@ mamba install -c bioconda spapros
 
 Visit our [documentation](https://spapros.readthedocs.io/en/latest/) for installation, tutorials, examples and more.
 
+## Web GUI and feasibility report
+
+This fork adds a browser GUI that runs spapros as background jobs and ends every run with a feasibility report: one of
+FEASIBLE, FEASIBLE WITH CAVEATS, NOT FEASIBLE or INCONCLUSIVE, with the reasons, a per cell type table, the confusion
+matrix, a panel size curve (how many genes are actually needed) and a comparison with PCA, DE, HVG and random gene sets.
+
+In the GUI you upload an `.h5ad` with raw counts, pick the cell type column and the critical cell types (types the
+panel must resolve; may be left empty), and set the panel capacity (300 genes by default) and reserved slots. All
+verdict thresholds are under "Advanced settings". The report can be opened, downloaded as a single HTML file (print it
+to PDF if needed), and comes with `verdict.json`, `probeset.csv` and `evaluation_summary.csv`.
+
+Run it on a VM with Docker:
+
+```bash
+docker build -t spapros .
+sudo mkdir -p /srv/spapros && sudo chown 1000 /srv/spapros  # the container runs as uid 1000
+docker run -d --name spapros -p 8000:8000 -v /srv/spapros:/data -e SPAPROS_SERVER_PASSWORD=change-me spapros
+```
+
+or without Docker:
+
+```bash
+pip install ".[server]"
+SPAPROS_SERVER_PASSWORD=change-me python -m spapros.server --host 0.0.0.0 --port 8000 --data-dir /srv/spapros
+```
+
+Then open `http://<vm-address>:8000`. With `SPAPROS_SERVER_PASSWORD` set, the browser asks for a password (any user
+name). Without it there is no login, so either set it or only reach the port through an SSH tunnel
+(`ssh -L 8000:localhost:8000 <vm>`); for HTTPS put a reverse proxy such as Caddy or nginx in front. Runs use all CPUs
+(`n_jobs=-1`) and one run at a time by default (`SPAPROS_SERVER_WORKERS`); the paper's benchmarks used 12 CPUs and
+64 GB RAM. Uploads and results live in the data directory, and runs interrupted by a restart resume from their
+checkpoints.
+
 ## Overview
 
 Selecting the right gene set is critical for targeted spatial transcriptomics, where only a limited number of genes can be profiled in an experiment.

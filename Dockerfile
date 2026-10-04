@@ -1,7 +1,9 @@
 # CPU-only image for running spapros (probe set selection and evaluation).
 #
 # Build:  docker build -t spapros .
-# Run:    docker run --rm -v "$PWD:/work" spapros spapros evaluation ...
+# GUI:    docker run -d -p 8000:8000 -v /srv/spapros:/data -e SPAPROS_SERVER_PASSWORD=change-me spapros
+#         then open http://<host>:8000 (uploads and results are kept in /data)
+# CLI:    docker run --rm -v "$PWD:/work" spapros spapros evaluation ...
 #    or:  docker run --rm -v "$PWD:/work" spapros python my_pipeline.py
 FROM python:3.11-slim
 
@@ -21,13 +23,18 @@ COPY spapros ./spapros
 # xgboost's Linux wheel pulls in nvidia-nccl-cu12 (~200 MB), which is only used for
 # multi-GPU training and loaded lazily, so it is removed to keep the image CPU-only.
 RUN pip install --upgrade pip \
-    && pip install . \
+    && pip install ".[server]" \
     && pip uninstall -y nvidia-nccl-cu12 \
     && python -c "import spapros, xgboost; print('spapros', spapros.__version__, '| xgboost', xgboost.__version__)" \
     && rm -rf /tmp/*
 
-RUN useradd --create-home --uid 1000 spapros
+RUN useradd --create-home --uid 1000 spapros \
+    && mkdir /data && chown spapros /data
 USER spapros
 WORKDIR /work
 
-CMD ["spapros", "--help"]
+ENV SPAPROS_SERVER_DATA_DIR=/data
+VOLUME /data
+EXPOSE 8000
+HEALTHCHECK CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
+CMD ["python", "-m", "spapros.server", "--host", "0.0.0.0", "--port", "8000"]
