@@ -1,171 +1,163 @@
-# spapros
-
-[![PyPI](https://img.shields.io/pypi/v/spapros.svg)](https://pypi.org/project/spapros/)
-[![Python Version](https://img.shields.io/pypi/pyversions/spapros)](https://pypi.org/project/spapros)
-[![License](https://img.shields.io/github/license/theislab/spapros)](https://opensource.org/licenses/MIT)
-[![Read the Docs](https://img.shields.io/readthedocs/spapros/latest.svg?label=Read%20the%20Docs)](https://spapros.readthedocs.io/)
-[![Build](https://github.com/theislab/spapros/workflows/Build%20spapros%20Package/badge.svg)](https://github.com/theislab/spapros/workflows/Build%20spapros%20Package/badge.svg)
-[![Tests](https://github.com/theislab/spapros/actions/workflows/run_tests.yml/badge.svg)](https://github.com/theislab/spapros/actions/workflows/run_tests.yml/badge.svg)
-[![Codecov](https://codecov.io/gh/theislab/spapros/branch/master/graph/badge.svg)](https://codecov.io/gh/theislab/spapros)
-[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
-[![Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+# spapros panel feasibility GUI
 
 ![logo](https://user-images.githubusercontent.com/21954664/111175015-409d9080-85a8-11eb-9055-f7452aed98b2.png)
 
-## Installation
+This fork of [spapros](https://github.com/theislab/spapros) adds a web GUI, meant to run on a VM, that selects a gene
+panel for targeted spatial transcriptomics from a single-cell RNA-seq reference and ends every run with a report that
+answers one question:
 
-You can install _spapros_ via [pip](https://pip.pypa.io/) from [PyPI](https://pypi.org/):
+> With a panel of at most B genes, can we tell apart the cell types annotated in this reference, and is spapros' gene
+> set a sound way to spend those slots?
 
-```bash
-pip install spapros
-```
+You upload a dataset, choose the cell type annotation and the cell types that matter, set the panel size, and get back
+one of four verdicts with the reasons behind it, plus the selected gene panel.
 
-Alternatively, you can install _spapros_ using [conda](https://docs.conda.io/) or [mamba](https://mamba.readthedocs.io/):
+![New run form](docs/_static/gui_new_run.png)
 
-```bash
-mamba install -c bioconda spapros
-```
+## Quick start
 
-## Usage
-
-Visit our [documentation](https://spapros.readthedocs.io/en/latest/) for installation, tutorials, examples and more.
-
-## Web GUI and feasibility report
-
-This fork adds a browser GUI that runs spapros as background jobs and ends every run with a feasibility report: one of
-FEASIBLE, FEASIBLE WITH CAVEATS, NOT FEASIBLE or INCONCLUSIVE, with the reasons, a per cell type table, the confusion
-matrix, a panel size curve (how many genes are actually needed) and a comparison with PCA, DE, HVG and random gene sets.
-
-In the GUI you upload an `.h5ad` with raw counts, pick the cell type column and the critical cell types (types the
-panel must resolve; may be left empty), and set the panel capacity (300 genes by default) and reserved slots. All
-verdict thresholds are under "Advanced settings". The report can be opened, downloaded as a single HTML file (print it
-to PDF if needed), and comes with `verdict.json`, `probeset.csv` and `evaluation_summary.csv`.
-
-Run it on a VM with Docker:
+### On a VM with Docker
 
 ```bash
+git clone https://github.com/alcrevenna/spapros.git && cd spapros
 docker build -t spapros .
-sudo mkdir -p /srv/spapros && sudo chown 1000 /srv/spapros  # the container runs as uid 1000
-docker run -d --name spapros -p 8000:8000 -v /srv/spapros:/data -e SPAPROS_SERVER_PASSWORD=change-me spapros
+sudo mkdir -p /srv/spapros && sudo chown 1000 /srv/spapros   # the container runs as uid 1000
+docker run -d --name spapros --restart unless-stopped \
+    -p 8000:8000 -v /srv/spapros:/data \
+    -e SPAPROS_SERVER_PASSWORD=change-me \
+    spapros
 ```
 
-or without Docker:
+Open `http://<vm-address>:8000` and sign in with the password (any user name). Uploads, results and reports are kept in
+`/srv/spapros`, so they survive container restarts and image rebuilds.
+
+### Without Docker
+
+Python 3.11 to 3.13:
 
 ```bash
-pip install ".[server]"
+pip install "spapros[server] @ git+https://github.com/alcrevenna/spapros.git"
 SPAPROS_SERVER_PASSWORD=change-me python -m spapros.server --host 0.0.0.0 --port 8000 --data-dir /srv/spapros
 ```
 
-Then open `http://<vm-address>:8000`. With `SPAPROS_SERVER_PASSWORD` set, the browser asks for a password (any user
-name). Without it there is no login, so either set it or only reach the port through an SSH tunnel
-(`ssh -L 8000:localhost:8000 <vm>`); for HTTPS put a reverse proxy such as Caddy or nginx in front. Runs use all CPUs
-(`n_jobs=-1`) and one run at a time by default (`SPAPROS_SERVER_WORKERS`); the paper's benchmarks used 12 CPUs and
-64 GB RAM. Uploads and results live in the data directory, and runs interrupted by a restart resume from their
-checkpoints.
+For a run on your own machine only, `python -m spapros.server` serves on `http://127.0.0.1:8000` with data in
+`./spapros_server_data`.
 
-## Overview
+## Preparing the input
 
-Selecting the right gene set is critical for targeted spatial transcriptomics, where only a limited number of genes can be profiled in an experiment.
-To select the set of genes, typically a scRNA-seq reference is used.
-Based on such a reference Spapros aims to select a set of genes that simultaneously optimizes for cell type identification and transcriptional variation, while optionally ensuring compatibility with probe design requirements.
+The GUI takes an AnnData `.h5ad` file with:
 
-![Probe set selection](docs/_static/fig1ab.png)
+-   **raw counts** in `X` (the GUI normalises and log-transforms them; untick that option if `X` is already
+    log-normalised),
+-   a **cell type column** in `obs`,
+-   ideally a boolean `var["highly_variable"]` column to restrict the candidate genes (for example from
+    `sc.pp.highly_variable_genes(adata, n_top_genes=8000, flavor="seurat_v3")`); otherwise spapros selects from all
+    genes.
 
-Below you find
+Cell types with fewer than 40 cells cannot be assessed by spapros' classifier. Merge or drop them before uploading, or
+the run may come back INCONCLUSIVE.
 
--   A list of [questions that guide your specific experimental design](#experimental-design-questions)
--   A short description of the [selection pipeline](#selection-pipeline)
--   A short overview of the [gene set evaluation](#gene-set-evaluation)
--   For more details see our [paper](https://www.nature.com/articles/s41592-024-02496-z), [API documentation](https://spapros.readthedocs.io/en/latest/api.html) and [tutorials](https://spapros.readthedocs.io/en/latest/tutorials.html).
+## Running a panel selection
 
-## Experimental design questions
+1. Click **New run** and choose the `.h5ad` file. After the upload, the GUI reads the file and shows its cells, genes
+   and columns. A dataset you uploaded before can be picked again from **Or reuse an earlier upload**.
+2. **Cell type column**: the annotation the panel has to recover. The GUI suggests a likely column.
+3. **Critical cell types**: tick the types the panel must tell apart. Any critical type that ends up unresolved makes
+   the run NOT FEASIBLE. Leave all unticked if none is critical. Types with too few cells are greyed out.
+4. **Panel capacity** (default 300) is how many genes the platform holds, and **reserved slots** are genes you will add
+   yourself (controls, housekeeping, genes of interest). spapros selects capacity minus reserved genes; the form shows
+   that number and warns if the dataset has fewer candidate genes.
+5. Optional: a **marker list CSV** (one column per cell type, genes as rows; see `data/small_data_marker_list.csv`)
+   and **genes that must be on the panel**.
+6. **Advanced settings**: quick or full evaluation (full adds clustering similarity), seed, CPUs, whether to compare
+   with baseline gene sets and to compute the panel size curve, and every threshold of the verdict.
+7. Click **Start run**. The run page shows the current stage (loading, selecting genes, baseline gene sets,
+   evaluating, panel size curve, writing report) and the end of the log. You can close the browser; the run continues
+   on the server.
 
-Each experiment has a specific research question and potential experimental/budget constraints.
-These specificities should be considered in the experimental design.
+The **Runs** page lists every run with its status and verdict. A run can be cancelled while it runs, retried after a
+failure or cancellation (it resumes from its checkpoints), and deleted when finished. Runs take minutes for small
+datasets and hours for large ones.
 
-**Typical questions** that arise for the gene set selection are:
+## Reading the report
 
-1. Are you only interested in cell type identification (e.g. cell type proportions and niche compositions)?
-2. Or also in within-cell type variation?
-3. How many genes do you want to profile?
-4. Are you interested in a specific disease signature?
-5. Are there pre-selected genes that you want to profile?
-6. Are there cell types or signals that are expected in the spatial data but not in the scRNA-seq reference?
-7. How good are the cell type annotations in the scRNA-seq reference?
+When a run finishes, its page shows the verdict and the report. **Open report** shows it in its own tab and
+**Download report** saves it as a single HTML file that opens offline and can be printed to PDF.
 
-Additionally, more technical questions that should be considered are:
+| Verdict                   | Meaning                                                                                              |
+| ------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **FEASIBLE**              | The panel resolves the cell types that matter and fits the budget with headroom. Go ahead.           |
+| **FEASIBLE WITH CAVEATS** | Workable, but some types are marginal or unresolved, or the budget is tight. Read the caveats first. |
+| **NOT FEASIBLE**          | Critical cell types cannot be resolved at this panel size, or the required genes do not fit.         |
+| **INCONCLUSIVE**          | The input cannot support a judgement (too few cells per type, too many types excluded).              |
 
-8. How many cell type clusters are there in the scRNA-seq reference?
-9. On which compute resources can you run the selection?
-10. I have multiple selected gene panels. How can I find out which one is the best?
+The report contains:
 
-If you have additional experimental design questions, please don't hesitate to either [open a github issue](https://github.com/theislab/spapros/issues) or [contact us directly](mailto:louis.kummerle@helmholtz-munich.de).
+-   the verdict with a one-line reason, the gene budget and the number of genes actually needed,
+-   the failures and caveats behind the verdict,
+-   a **cell type table**: cells, recall, class (resolved, marginal, unresolved, not assessed), the type it is most
+    often confused with, and the best baseline's recall, worst first,
+-   the **confusion matrix** of the selected panel,
+-   the **panel size curve**: how many cell types are resolved with the top 25%, 50%, 75%, 100% (and 125%, 150%) of
+    the ranked genes, which shows how many genes are really needed,
+-   a **comparison with simple gene sets** (PCA, differential expression, highly variable and three random sets of the
+    same size),
+-   **secondary metrics** (neighbourhood and clustering recovery, gene redundancy, marker correlation),
+-   the **gene panel** with each gene's rank and the cell types it marks, and the thresholds and options used.
 
-**Answers to these questions**, to choose the most appropriate method and parameters for the probe set selection:
+The run page also offers `verdict.json` (the verdict and every number behind it), `probeset.csv` (spapros' full gene
+ranking; selected genes have `selection = True`) and `evaluation_summary.csv`.
 
-1. Run the selection with `n_pca_genes=0` (see e.g. [Cell type classification only](https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_advanced_selection.html#ii.-Cell-type-classification-only) which refers to SpaprosCTo of our paper).
-   Note that in this case less than `n` genes could be selected. If that happens, just run the selection multiple times (as done
-   e.g. in [Selection for high numbers of genes (>150)](<https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_advanced_selection.html#iii.-Selection-for-high-numbers-of-genes-(%3E-150)>)).
-2. This refers to the default parameter setting of Spapros.
-3. In case of more than 150 genes, it's recommended to sequentially run the selection multiple times
-   (see [Selection for high numbers of genes (>150)](<https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_advanced_selection.html#iii.-Selection-for-high-numbers-of-genes-(%3E-150)>)).
-4. While Spapros tries to capture general variation, your main focus might lie on a subtle disease signature.
-   In this case, you can either define additional "diseased" cell type clusters or manually identify additional
-   DE genes (e.g. per cell type) and add them as pre-selection (see [Select a few additional genes](https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_advanced_selection.html#i.-Select-a-few-additional-genes)).
-5. You can use the `preselected_genes` argument to add a set of pre-selected genes (see [Select a few additional genes](https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_advanced_selection.html#i.-Select-a-few-additional-genes)).
-6. This problem can not be solved by Spapros' selection on the scRNA-seq reference. Some literature genes must be added
-   manually (or can be provided as a marker list, see [Selection with curated marker list](https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_advanced_selection.html#iv.-Selection-with-curated-marker-list)).
-7. We highly recommend to use a well prepared scRNA-seq reference for the selection, to tailor the set of annotated cell types
-   to the given research question. However, a selection on a generic leiden clustering will still capture the main variation
-   in the dataset (in that case do not use `n_pca_genes=0`).
-8. The time and memory consumption of Spapros selections grow with the number of cell types. In case of > 100 cell type
-   clusters, you might want to split the data into coarse cell type groups (e.g. immune cells vs. others) and run the selection
-   separately on each group.
-9. We recommend to run Spapros on a node of a compute cluster. For the benchmarks in the paper we used 12 cpus and 64GB memory.
-10. With the Spapros package we provide an evaluation scheme to evaluate and compare gene sets (see [Evaluation of gene sets](https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_basic_evaluation.html)
-    and [Advanced evaluation](https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_advanced_evaluation.html)).
+### How the verdict is decided
 
-## Selection pipeline
+Recall is the share of a cell type's cells that spapros' classifier (XGBoost, 5-fold cross validation, 5 seeds)
+assigns correctly using only the panel genes. A cell type is resolved at a recall of at least 0.80, marginal from 0.60
+and unresolved below. With the default thresholds:
 
-Spapros is an end-to-end probe set selection pipeline. The pipeline performs optimized gene selection while optionally designing the probe sequence and accounting for technology-specific technical constraints. These aspects are considered jointly to deliver an optimal combinatorial probe set. If you are only interested in the gene panel selection jump to [gene panel selection](#gene-panel-selection), otherwise the [probe design and filter](#probe-design-and-filter) section is relevant.
+| Check                       | Feasible            | Caveat           | Not feasible                   |
+| --------------------------- | ------------------- | ---------------- | ------------------------------ |
+| Critical cell types         | all resolved        | any marginal     | any unresolved                 |
+| Other cell types            | all resolved        | any not resolved |                                |
+| Share of types resolved     | ≥ 90%               | 70–90%           | < 70%                          |
+| Mean recall                 | ≥ 0.85              | 0.75–0.85        | < 0.75                         |
+| Genes needed (size curve)   | ≤ 80% of the budget | above that       |                                |
+| Comparison with random sets | better by ≥ 0.05    |                  | not better, and not a clear go |
+| Required genes              | fit the budget      |                  | do not fit                     |
 
-### probe design and filter
+Secondary metrics and trailing the best baseline only add caveats. A run is INCONCLUSIVE when fewer than two cell types
+can be assessed, more than 20% of types or 5% of cells are in types too small to assess, or a critical type cannot be
+assessed. All thresholds can be changed per run under **Advanced settings**.
 
-Note that the probe design component of Spapros is implemented in the [oligo designer toolsuite package](https://oligo-designer-toolsuite.readthedocs.io/en/latest/). Follow our tutorial on the end-to-end selection to run the probe design filter, the gene panel selection and the probe design (see [End-to-end selection](https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_end_to_end_selection.html)).
-As a first step in the selection process, Spapros’ probe design component can be used to filter the full list of possible genes to exclude genes for which probes cannot be designed due to technology-specific technical constraints. These constraints include the availability of sufficient unique possible probe sequences, as well as sequence properties like GC-content and melting temperature requirements. Moreover, binding locations of the final probes for a given gene cannot overlap. Thus, we generate non-overlapping probe sets with optimal thermodynamic and sequence properties with a graph-based search algorithm. This probe design component supports a range of technologies, including SCRINSHOT, MERFISH, SeqFISH and HybISS, and is extensible to new technologies. Additionally, Spapros’ probe design filter can be used independently of the gene set selection process, making it compatible with other selection methods.
+Classification on single-cell data is an upper bound for spatial data, where capture is lower and cell segmentation
+adds errors. Expression fit to the platform's detection range and probe design are not checked.
 
-![Probe design and filter](docs/_static/fig2b.png)
+## Server settings
 
-### gene panel selection
+| Setting                   | Flag         | Default                 | Meaning                                                         |
+| ------------------------- | ------------ | ----------------------- | --------------------------------------------------------------- |
+| `SPAPROS_SERVER_PASSWORD` |              | unset (no login)        | Password for every page (HTTP basic auth, any user name).       |
+| `SPAPROS_SERVER_DATA_DIR` | `--data-dir` | `./spapros_server_data` | Where uploads, runs and reports are stored (`/data` in Docker). |
+| `SPAPROS_SERVER_WORKERS`  | `--workers`  | 1                       | Runs that execute at the same time.                             |
+|                           | `--host`     | `127.0.0.1`             | Address to listen on (`0.0.0.0` in Docker).                     |
+|                           | `--port`     | 8000                    | Port.                                                           |
 
-For the gene panel selection, Spapros selects genes that describe the overall variation in the scRNA-seq reference using a PCA-based selection procedure on a pre-selection of highly variable genes. To ensure cell types can be recovered using the gene set, Spapros uses the PCA-selected genes to predict cell type labels using a binary classification tree for each cell type. The genes used in these trees represent candidate cell type marker genes, and the tree itself provides a combinatorial rule, describing how the cell types can be identified in the generated spatial transcriptomics data. To ensure that all user-defined cell types can be identified, Spapros compares the classification performance for each cell type to the performance of reference trees. These trees are generated via a custom approach that iteratively optimizes for classifying similar cell identities. In each iteration Spapros performs DE selections on critical cell type subsets and retrains the trees on the extended gene pool. If any discrepancy in performance is found with the DE trees (that represent the optimal performance target), Spapros iteratively adds DE genes to the list of possible genes to improve classification performance. Finally, genes are ranked based on their feature importance in classification trees to allow for a user-defined number of selected genes. To facilitate downstream analysis in studies that solely focus on detecting cell type frequencies, it may be of interest to select only genes for cell type recovery rather than detecting additional spatial signals. For this, we provide SpaprosCTo (`n_pca_genes=0`), which exclusively utilizes DE trees for selection.
+-   **Access**: without a password anyone who reaches the port can use the GUI. Set `SPAPROS_SERVER_PASSWORD`, or keep
+    the port closed and use an SSH tunnel (`ssh -L 8000:localhost:8000 <vm>`). For HTTPS, put a reverse proxy such as
+    Caddy or nginx in front; the GUI also works under a path prefix.
+-   **Resources**: each run uses all CPUs by default, so one run at a time is the sensible setting. The spapros paper
+    used 12 CPUs and 64 GB RAM; time and memory grow with the number of cell types (consider splitting data with more
+    than about 100 types). No GPU is needed.
+-   **Restarts**: runs interrupted by a server restart are queued again and resume from their checkpoints.
+-   **API**: everything the GUI does is available over HTTP (`/uploads`, `/jobs`, `/jobs/{id}/report`, ...); see
+    `http://<vm-address>:8000/docs`.
 
-![Gene panel selection](docs/_static/fig2a.png)
+## Using spapros from Python
 
-### technical constraints and prior knowledge
-
-To account for technical constraints of expression levels a smoothed multiplicative penalty kernel is applied to the scores of PCA and DE based selections. See our tutorial on [expression constraints](https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_advanced_selection.html#v.-Selection-with-expression-constraints) for more details.
-While Spapros can select and design probe sets using only a reference scRNA-seq dataset and a list of cell types as input, users can also add prior knowledge and constraints to bias the algorithm toward user-defined genes. See our tutorials on [pre-selected genes](https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_advanced_selection.html#i.-Select-a-few-additional-genes) and [marker lists](https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_advanced_selection.html#iv.-Selection-with-curated-marker-list) for more details.
-
-## Gene set evaluation
-
-Spapros includes an evaluation suite to assess the quality of selected gene sets. Key metrics include:
-
-1. Variation recovery: Evaluating the preservation of fine and global transcriptional variation.
-2. Cell type recovery: Measuring how well the gene set distinguishes predefined cell types.
-3. Gene redundancy: Assessing the redundancy of the selected genes.
-4. Technical constraints: Ensuring adherence to design limitations, such as expression thresholds and probe sequence requirements. Note that this group is based on custom expression constraints (see [Expression constraints](https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_advanced_selection.html#v.-Selection-with-expression-constraints)).
-
-The metrics of group 1 and 2 are aggregated into an overall performance score in our comparison tables. Based on the specific experimental design demands the most appropriate metric can be chosen.
-
-![Evaluation](docs/_static/fig1c.png)
-
-Find more details and discussion on the evaluations in
-
--   our [tutorials](https://spapros.readthedocs.io/en/latest/_tutorials/spapros_tutorial_advanced_evaluation.html)
--   our [paper](https://www.nature.com/articles/s41592-024-02496-z)
-
-and an overview of our plotting functions for [visualizing the results](https://spapros.readthedocs.io/en/latest/api.html#plotting).
+The GUI runs spapros' own selection (`sp.se.ProbesetSelector`) and evaluation (`sp.ev.ProbesetEvaluator`). To use
+spapros directly, for example for expression constraints or probe design, see the
+[spapros documentation](https://spapros.readthedocs.io/en/latest/), its [tutorials](https://spapros.readthedocs.io/en/latest/tutorials.html)
+and the [paper](https://www.nature.com/articles/s41592-024-02496-z). The upstream project is
+[theislab/spapros](https://github.com/theislab/spapros).
 
 ## How to cite
 
