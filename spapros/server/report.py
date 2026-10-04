@@ -138,7 +138,7 @@ def baseline_figure(mean_acc: Dict[str, Optional[float]]) -> str:
     import matplotlib.pyplot as plt
 
     plt.rcParams["svg.fonttype"] = "none"
-    items = [(k, v) for k, v in mean_acc.items() if v is not None]
+    items = sorted(((k, v) for k, v in mean_acc.items() if v is not None), key=lambda kv: kv[0] != fz.SPAPROS_SET_ID)
     fig, ax = plt.subplots(figsize=(6.5, 0.4 * len(items) + 1))
     names = [k for k, _ in items][::-1]
     values = [v for _, v in items][::-1]
@@ -314,7 +314,10 @@ def render_report(
     else:
         w("<p class=muted>Not computed for this run.</p>")
     req = "fit" if size["required_fits"] else "do not fit"
-    w(f"<p>Required (preselected) genes: {size['n_required_genes']}, which {req} the budget.</p>")
+    w(
+        f"<p>Genes the panel must contain (preselected genes and the markers spapros requires per cell type): "
+        f"{size['n_required_genes']}, which {req} the budget.</p>"
+    )
 
     # 6. Baselines.
     w("<h2>Comparison with simple gene sets</h2>")
